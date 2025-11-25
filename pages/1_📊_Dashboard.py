@@ -89,18 +89,29 @@ col1, col2 = st.columns([3, 1])
 with col1:
     st.markdown("**Période d'analyse**")
 with col2:
-    period_hours = st.selectbox("", [6, 12, 24, 48, 72], index=2, label_visibility="collapsed", key="period_selector")
+    period_options = ["6h", "12h", "24h", "48h", "72h", "7j", "30j", "Tout"]
+    period_selected = st.selectbox("", period_options, index=5, label_visibility="collapsed", key="period_selector")
 
 # Calculer date_from AVANT la requête en utilisant la valeur sélectionnée
-date_from = datetime.utcnow() - timedelta(hours=period_hours)
+if period_selected == "Tout":
+    date_from = None
+elif period_selected == "7j":
+    date_from = datetime.utcnow() - timedelta(days=7)
+elif period_selected == "30j":
+    date_from = datetime.utcnow() - timedelta(days=30)
+else:
+    # Extraire les heures (6h, 12h, etc.)
+    hours = int(period_selected.replace('h', ''))
+    date_from = datetime.utcnow() - timedelta(hours=hours)
 
 # Récupérer les données
 with get_db_context() as db:
+    query = db.query(MesureKPI).filter(MesureKPI.link_id == link_id)
     
-    measures = db.query(MesureKPI).filter(
-        MesureKPI.link_id == link_id,
-        MesureKPI.timestamp >= date_from
-    ).order_by(MesureKPI.timestamp).all()
+    if date_from is not None:
+        query = query.filter(MesureKPI.timestamp >= date_from)
+    
+    measures = query.order_by(MesureKPI.timestamp).all()
     
     # Conversion en dictionnaires DANS le contexte de la session
     measures_data = [{
@@ -114,8 +125,16 @@ with get_db_context() as db:
     } for m in measures]
 
 if len(measures_data) < 2:
-    st.warning("Données insuffisantes pour afficher les graphiques")
+    st.warning(f"⚠️ Aucune donnée disponible pour la période sélectionnée ({period_selected}). Essayez 'Tout' pour voir toutes les mesures.")
 else:
+    # Afficher info si données anciennes
+    if measures_data:
+        latest_measure = max(m['timestamp'] for m in measures_data)
+        time_diff = datetime.utcnow() - latest_measure
+        if time_diff > timedelta(hours=24):
+            days_old = time_diff.days
+            st.info(f"ℹ️ Les dernières données datent d'il y a {days_old} jour(s). Importez de nouvelles mesures pour mettre à jour.")
+    
     # Conversion en DataFrame
     df = pd.DataFrame(measures_data)
     
@@ -208,7 +227,17 @@ else:
 st.markdown("---")
 st.markdown("### 📊 Statistiques Détaillées")
 
-stats = calculate_period_statistics(link_id, hours=period_hours)
+# Calculer les heures pour les statistiques
+if period_selected == "Tout":
+    stats_hours = 24 * 365  # 1 an pour "Tout"
+elif period_selected == "7j":
+    stats_hours = 24 * 7
+elif period_selected == "30j":
+    stats_hours = 24 * 30
+else:
+    stats_hours = int(period_selected.replace('h', ''))
+
+stats = calculate_period_statistics(link_id, hours=stats_hours)
 
 if stats:
     col1, col2 = st.columns(2)

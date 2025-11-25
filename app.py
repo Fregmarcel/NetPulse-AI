@@ -198,12 +198,18 @@ def main_app():
                 "Sélectionnez une liaison",
                 options=link_names,
                 index=selected_index,
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                key="link_selector"
             )
             
             # Mettre à jour la liaison sélectionnée
             selected_idx = link_names.index(selected_name)
-            st.session_state.selected_link = link_ids[selected_idx]
+            new_link_id = link_ids[selected_idx]
+            
+            # Forcer le rechargement si la liaison change
+            if st.session_state.selected_link != new_link_id:
+                st.session_state.selected_link = new_link_id
+                st.rerun()
             
             # Afficher les détails de la liaison
             selected_link = links[selected_idx]
