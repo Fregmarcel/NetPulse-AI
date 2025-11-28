@@ -18,7 +18,13 @@ if not st.session_state.get('authenticated', False):
     st.warning("⚠️ Veuillez vous connecter")
     st.stop()
 
-st.title("📊 Dashboard - Supervision en Temps Réel")
+# En-tête avec bouton de rafraîchissement
+col1, col2 = st.columns([4, 1])
+with col1:
+    st.title("📊 Dashboard - Supervision en Temps Réel")
+with col2:
+    if st.button("🔄 Actualiser", use_container_width=True, type="secondary"):
+        st.rerun()
 
 # Récupérer la liaison sélectionnée
 link_id = st.session_state.get('selected_link')
@@ -27,11 +33,26 @@ if not link_id:
     st.error("Aucune liaison sélectionnée")
     st.stop()
 
+# Afficher quelle liaison est active
+from backend.database.models import FHLink
+with get_db_context() as db:
+    active_link = db.query(FHLink).filter(FHLink.id == link_id).first()
+    if active_link:
+        st.info(f"📡 Liaison active : **{active_link.nom}** ({active_link.site_a} ↔ {active_link.site_b})")
+
 # Récupérer les dernières métriques
 kpis = get_latest_kpis(link_id)
 
 if not kpis:
     st.info("💡 Aucune donnée disponible pour cette liaison. Importez des mesures depuis la page Import.")
+    st.markdown("### 📤 Comment importer des données ?")
+    st.markdown("""
+    1. Allez sur la page **📤 Import** dans le menu
+    2. Uploadez votre fichier CSV/Excel
+    3. Vérifiez la validation
+    4. Cliquez sur **Importer**
+    5. Les données apparaîtront automatiquement ici !
+    """)
     st.stop()
 
 # === SECTION 1 : Métriques principales ===
@@ -76,8 +97,24 @@ with col3:
     st.metric("Pluie", f"{rainfall:.1f} mm" + (" 🌧️" if rainfall > 5 else ""))
 
 with col4:
-    minutes_ago = (datetime.utcnow() - kpis['timestamp']).seconds // 60
-    st.metric("Dernière mesure", f"Il y a {minutes_ago} min")
+    time_diff = datetime.utcnow() - kpis['timestamp']
+    total_seconds = time_diff.total_seconds()
+    
+    if total_seconds < 3600:  # Moins d'1 heure
+        minutes_ago = int(total_seconds // 60)
+        time_str = f"Il y a {minutes_ago} min"
+    elif total_seconds < 86400:  # Moins d'1 jour
+        hours_ago = int(total_seconds // 3600)
+        time_str = f"Il y a {hours_ago}h"
+    else:  # Plus d'1 jour
+        days_ago = int(total_seconds // 86400)
+        time_str = f"Il y a {days_ago}j"
+    
+    # Afficher en rouge si données anciennes (> 24h)
+    if total_seconds > 86400:
+        st.metric("Dernière mesure", time_str, delta="⚠️ Données anciennes", delta_color="off")
+    else:
+        st.metric("Dernière mesure", time_str)
 
 st.markdown("---")
 
@@ -90,7 +127,8 @@ with col1:
     st.markdown("**Période d'analyse**")
 with col2:
     period_options = ["6h", "12h", "24h", "48h", "72h", "7j", "30j", "Tout"]
-    period_selected = st.selectbox("", period_options, index=5, label_visibility="collapsed", key="period_selector")
+    # Par défaut "Tout" pour afficher toutes les données disponibles
+    period_selected = st.selectbox("", period_options, index=7, label_visibility="collapsed", key="period_selector")
 
 # Calculer date_from AVANT la requête en utilisant la valeur sélectionnée
 if period_selected == "Tout":
@@ -130,10 +168,26 @@ else:
     # Afficher info si données anciennes
     if measures_data:
         latest_measure = max(m['timestamp'] for m in measures_data)
+        oldest_measure = min(m['timestamp'] for m in measures_data)
         time_diff = datetime.utcnow() - latest_measure
+        
         if time_diff > timedelta(hours=24):
             days_old = time_diff.days
-            st.info(f"ℹ️ Les dernières données datent d'il y a {days_old} jour(s). Importez de nouvelles mesures pour mettre à jour.")
+            hours_old = int((time_diff.total_seconds() % 86400) / 3600)
+            
+            # Message personnalisé selon l'ancienneté
+            if days_old > 7:
+                st.error(f"🔴 **Attention** : Les dernières données datent de **{days_old} jour(s)** ({latest_measure.strftime('%d/%m/%Y %H:%M')}). Importez de nouvelles mesures pour une supervision actuelle !")
+            elif days_old > 1:
+                st.warning(f"⚠️ **Données non récentes** : Les dernières mesures datent de **{days_old} jour(s) et {hours_old}h** ({latest_measure.strftime('%d/%m/%Y %H:%M')}). Importez des données plus récentes.")
+            else:
+                st.info(f"ℹ️ Les dernières données datent d'il y a **{days_old} jour(s) et {hours_old}h** ({latest_measure.strftime('%d/%m/%Y %H:%M')}). Importez de nouvelles mesures pour mettre à jour.")
+            
+            # Afficher la plage de données
+            st.caption(f"📅 Plage des données affichées : du {oldest_measure.strftime('%d/%m/%Y %H:%M')} au {latest_measure.strftime('%d/%m/%Y %H:%M')}")
+        else:
+            # Données récentes
+            st.success(f"✅ Données récentes - Dernière mesure : {latest_measure.strftime('%d/%m/%Y à %H:%M')}")
     
     # Conversion en DataFrame
     df = pd.DataFrame(measures_data)
@@ -267,8 +321,3 @@ if stats:
         st.markdown("**Latence**")
         st.write(f"• Moyenne: {stats['latency']['avg']:.2f} ms")
         st.write(f"• Maximum: {stats['latency']['max']:.2f} ms")
-
-# Bouton d'actualisation
-st.markdown("---")
-if st.button("🔄 Actualiser les données", use_container_width=True):
-    st.rerun()

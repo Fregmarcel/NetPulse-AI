@@ -3,7 +3,7 @@ Loader de données pour insérer les mesures dans la base de données.
 """
 import pandas as pd
 from datetime import datetime
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Set
 from backend.database.models import MesureKPI, FHLink
 from backend.database.connection import get_db_context
 from backend.security.logger import log_info, log_error
@@ -60,8 +60,12 @@ def load_measures_to_db(df: pd.DataFrame, link_name: str = None) -> Tuple[bool, 
         'imported': 0,
         'skipped': 0,
         'errors': 0,
-        'duplicates': 0
+        'duplicates': 0,
+        'alerts_generated': 0
     }
+    
+    # Ensemble pour suivre les liaisons importées
+    imported_links: Set[int] = set()
     
     try:
         with get_db_context() as db:
@@ -75,6 +79,7 @@ def load_measures_to_db(df: pd.DataFrame, link_name: str = None) -> Tuple[bool, 
                     
                     # Récupérer ou créer la liaison
                     link_id, _ = get_or_create_link(current_link_name)
+                    imported_links.add(link_id)
                     
                     # Vérifier si la mesure existe déjà
                     timestamp = pd.to_datetime(row['timestamp'])
@@ -120,6 +125,33 @@ def load_measures_to_db(df: pd.DataFrame, link_name: str = None) -> Tuple[bool, 
             
         success = stats['imported'] > 0
         log_info(f"Import terminé : {stats['imported']}/{stats['total']} lignes importées", "DataLoader")
+        
+        # Générer les alertes pour chaque liaison (même si doublons, vérifier quand même)
+        if imported_links:
+            from backend.alerts.alert_engine import check_and_create_alerts
+            print(f"\n{'='*60}")
+            print(f"🚨 GÉNÉRATION DES ALERTES")
+            print(f"{'='*60}")
+            log_info(f"Génération des alertes pour {len(imported_links)} liaison(s)", "DataLoader")
+            
+            for link_id in imported_links:
+                try:
+                    print(f"\n📡 Analyse de la liaison ID={link_id}")
+                    alerts_created = check_and_create_alerts(link_id)
+                    stats['alerts_generated'] += len(alerts_created)
+                    if alerts_created:
+                        log_info(f"Liaison {link_id}: {len(alerts_created)} alerte(s) générée(s)", "DataLoader")
+                        print(f"   ✓ {len(alerts_created)} alerte(s) créée(s)")
+                    else:
+                        print(f"   • Aucune nouvelle alerte (seuils OK ou alertes déjà existantes)")
+                except Exception as e:
+                    log_error(f"Erreur génération alertes pour liaison {link_id}: {str(e)}", module="DataLoader")
+                    print(f"   ✗ Erreur: {str(e)}")
+            
+            print(f"\n{'='*60}")
+            print(f"📊 RÉSULTAT: {stats['alerts_generated']} alerte(s) générée(s) au total")
+            print(f"{'='*60}\n")
+            log_info(f"Total: {stats['alerts_generated']} alerte(s) générée(s)", "DataLoader")
         
         return success, stats
         

@@ -16,7 +16,13 @@ if not st.session_state.get('authenticated', False):
     st.warning("⚠️ Veuillez vous connecter")
     st.stop()
 
-st.title("🚨 Gestion des Alertes")
+# En-tête avec bouton de rafraîchissement
+col1, col2 = st.columns([4, 1])
+with col1:
+    st.title("🚨 Gestion des Alertes")
+with col2:
+    if st.button("🔄 Actualiser", use_container_width=True, type="secondary"):
+        st.rerun()
 
 user = st.session_state.user
 link_id = st.session_state.get('selected_link')
@@ -24,6 +30,14 @@ link_id = st.session_state.get('selected_link')
 if not link_id:
     st.error("Aucune liaison sélectionnée")
     st.stop()
+
+# Afficher quelle liaison est active
+from backend.database.models import FHLink
+from backend.database.connection import get_db_context
+with get_db_context() as db:
+    active_link = db.query(FHLink).filter(FHLink.id == link_id).first()
+    if active_link:
+        st.info(f"📡 Liaison active : **{active_link.nom}** ({active_link.site_a} ↔ {active_link.site_b})")
 
 # Vérification manuelle des alertes
 col1, col2 = st.columns([3, 1])
@@ -235,8 +249,3 @@ if alerts:
                  })
     
     st.plotly_chart(fig, use_container_width=True)
-
-# Bouton actualisation
-st.markdown("---")
-if st.button("🔄 Actualiser", use_container_width=True):
-    st.rerun()

@@ -135,6 +135,11 @@ if uploaded_file is not None:
         
         with col2:
             if st.button("📤 Importer", use_container_width=True, type="primary"):
+                # Afficher les informations de la liaison cible
+                link_name = df['link_name'].iloc[0] if 'link_name' in df.columns else None
+                if link_name:
+                    st.info(f"📡 Import pour la liaison: **{link_name}**")
+                
                 with st.spinner("Import en cours..."):
                     # Import des données
                     success, stats = load_measures_to_db(df)
@@ -142,8 +147,23 @@ if uploaded_file is not None:
                 if success:
                     st.success("✅ Import réussi !")
                     
+                    # Trouver l'ID de la liaison importée et la sélectionner
+                    from backend.database.models import FHLink
+                    from backend.database.connection import get_db_context
+                    
+                    if link_name:
+                        with get_db_context() as db:
+                            link = db.query(FHLink).filter(FHLink.nom == link_name).first()
+                            if link:
+                                # Mettre à jour la liaison sélectionnée
+                                old_link = st.session_state.get('selected_link')
+                                st.session_state.selected_link = link.id
+                                
+                                if old_link != link.id:
+                                    st.info(f"🔄 Liaison active changée vers: **{link.nom}**")
+                    
                     # Afficher les statistiques
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     
                     with col1:
                         st.metric("Total", stats['total'])
@@ -153,11 +173,24 @@ if uploaded_file is not None:
                         st.metric("Ignorées", stats['skipped'])
                     with col4:
                         st.metric("Erreurs", stats['errors'])
+                    with col5:
+                        st.metric("Alertes", stats.get('alerts_generated', 0))
                     
                     if stats['duplicates'] > 0:
                         st.warning(f"⚠️ {stats['duplicates']} doublon(s) ignoré(s)")
                     
+                    if stats.get('alerts_generated', 0) > 0:
+                        st.info(f"🚨 {stats['alerts_generated']} alerte(s) générée(s) automatiquement. Consultez la page Alertes.")
+                    
+                    # Message pour aller voir le Dashboard
+                    st.success("✅ **Données importées !** Allez sur le 📊 Dashboard pour visualiser les nouvelles données.")
+                    
                     st.balloons()
+                    
+                    # Forcer le rechargement de la page après 2 secondes
+                    import time
+                    time.sleep(2)
+                    st.rerun()
                 else:
                     st.error("❌ Erreur lors de l'import")
                     st.write(f"Statistiques : {stats}")

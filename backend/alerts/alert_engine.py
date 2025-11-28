@@ -22,6 +22,7 @@ def create_alert(
 ) -> Tuple[bool, int]:
     """
     Crée une nouvelle alerte dans la base de données.
+    Évite les doublons d'alertes actives du même type.
     
     Args:
         link_id (int): ID de la liaison
@@ -38,6 +39,19 @@ def create_alert(
     """
     try:
         with get_db_context() as db:
+            # Vérifier si une alerte similaire existe déjà (même type, même liaison, non résolue)
+            existing_alert = db.query(Alerte).filter(
+                Alerte.link_id == link_id,
+                Alerte.type == alert_type,
+                Alerte.resolved == False
+            ).first()
+            
+            # Si une alerte similaire existe déjà, ne pas créer de doublon
+            if existing_alert:
+                print(f"Alerte {alert_type} déjà active pour liaison {link_id}")
+                return False, 0
+            
+            # Créer la nouvelle alerte
             alerte = Alerte(
                 link_id=link_id,
                 timestamp=datetime.utcnow(),
@@ -55,6 +69,7 @@ def create_alert(
             db.commit()
             db.refresh(alerte)
             
+            print(f"✓ Alerte créée : {alert_type} [{severite}] pour liaison {link_id}")
             return True, alerte.id
             
     except Exception as e:
@@ -65,6 +80,7 @@ def create_alert(
 def check_and_create_alerts(link_id: int) -> List[int]:
     """
     Vérifie les métriques et crée des alertes si nécessaire.
+    Analyse les dernières mesures pour détecter les problèmes.
     
     Args:
         link_id (int): ID de la liaison
@@ -77,10 +93,15 @@ def check_and_create_alerts(link_id: int) -> List[int]:
     # Récupérer les dernières métriques
     kpis = get_latest_kpis(link_id)
     if not kpis:
+        print(f"⚠️ Aucune métrique disponible pour liaison {link_id}")
         return created_alerts
+    
+    print(f"\n🔍 Vérification alertes pour liaison {link_id}")
+    print(f"   RSSI: {kpis['rssi_dbm']:.1f} dBm | SNR: {kpis['snr_db']:.1f} dB | BER: {kpis['ber']:.2e}")
     
     # Vérifier RSSI
     if kpis['rssi_dbm'] < config.SEUILS_RSSI['CRITIQUE']:
+        print(f"   → RSSI critique détecté ({kpis['rssi_dbm']:.1f} < {config.SEUILS_RSSI['CRITIQUE']})")
         success, alert_id = create_alert(
             link_id=link_id,
             alert_type='RSSI_LOW',
@@ -94,6 +115,7 @@ def check_and_create_alerts(link_id: int) -> List[int]:
             created_alerts.append(alert_id)
     
     elif kpis['rssi_dbm'] < config.SEUILS_RSSI['DEGRADED']:
+        print(f"   → RSSI dégradé détecté ({kpis['rssi_dbm']:.1f} < {config.SEUILS_RSSI['DEGRADED']})")
         success, alert_id = create_alert(
             link_id=link_id,
             alert_type='RSSI_LOW',
